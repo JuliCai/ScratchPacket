@@ -296,7 +296,7 @@ def delete_old_requests():
     requests = [req for req in requests if current_time - req.lastping < 16]
     after_count = len(requests)
     if basicprints and before_count != after_count:
-        print(f"Deleted {before_count - after_count} old requests due to timeout.")
+        print(f"Deleted {before_count - after_count} old requests.")
 
 def process_request(req):
     global requests
@@ -367,7 +367,7 @@ def delete_old_responses():
     responsestoping = [r for r in responsestoping if current_time - r.timestamp < 20]
     after_count = len(responsestoping)
     if basicprints and before_count != after_count:
-        print(f"Deleted {before_count - after_count} old responses.")
+        print(f"Deleted {before_count - after_count} old responses due to timeout.")
 
 while True:
     scan_for_requests()
