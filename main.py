@@ -15,8 +15,8 @@ debug = True # Whether to print debug stuff (not recommended outside development
 basicprints = True # Whether to print basic status/lifecycle updates (recommended for running locally, not recommended for servers)
 
 
-"""c
-DO CHANGE THESE VARIABLES:
+"""
+DON'T CHANGE THESE VARIABLES:
 """
 requests = []
 responsestoping = []
