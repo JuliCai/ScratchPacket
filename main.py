@@ -364,7 +364,7 @@ def delete_old_responses():
     responsestoping = [r for r in responsestoping if current_time - r.timestamp < 20]
     after_count = len(responsestoping)
     if basicprints and before_count != after_count:
-        print(f"Deleted {before_count - after_count} old responses due to timeout.")
+        print(f"Deleted {before_count - after_count} old responses.")
 
 while True:
     scan_for_requests()
