@@ -311,6 +311,9 @@ def process_request(req):
     elif req.type == "whois":
         # Whois request: respond with useragent info
         resp.payload = useragent
+    elif req.type == "ping":
+        # Ping request: respond with "pong"
+        resp.payload = "pong"
     elif req.type == "success":
         # successfully recieved response, delete response and set parent request to responded
         responsestoping = [r for r in responsestoping if r.requestid != req.parentid]
