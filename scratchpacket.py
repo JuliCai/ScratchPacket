@@ -1,4 +1,4 @@
-class packet:
+class Packet:
     def __init__(self, sender, projectname , id, timestamp, lastping, parentid, payload, type):
         self.sender = sender
         self.projectname = projectname
@@ -11,7 +11,7 @@ class packet:
         self.responded = False
         self.state = "new"  # new, pingingresponse, responded
 
-class response:
+class Response:
     def __init__(self, responseid, requestid, timestamp, payload):
         self.responseid = responseid
         self.requestid = requestid

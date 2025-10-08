@@ -1,5 +1,5 @@
 import scratchattach as sa
-from scratchpacket import packet
+from scratchPacket import Packet
 import time
 
 cloud = sa.get_tw_cloud("1225704696")

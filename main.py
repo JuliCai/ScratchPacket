@@ -1,14 +1,17 @@
+import os
 import scratchattach as sa
-from scratchpacket import packet, response
+from scratchpacket import Packet, Response
 import time
 import traceback
 import random
+from xai_sdk import Client
+from xai_sdk.chat import system, user
 
 
 """
 CHANGE THESE VARIABLES:
 """
-project_id = "1225704696"  # Replace with your Scratch project ID
+project_id = "1204776886"  # Replace with your Scratch project ID
 logfile_path = "logs.txt"  # Path to your log file
 useragent = "library: scratchpacket/1.0 by jhalloran | cloud bot by YOUR NAME"  # User agent for Scratch requests
 debug = True # Whether to print debug stuff (not recommended outside development)
@@ -21,9 +24,10 @@ DON'T CHANGE THESE VARIABLES:
 requests = []
 responsestoping = []
 cloud = sa.get_tw_cloud(project_id, purpose = useragent)
-
-import scratchattach as sa
-import time
+client = Client(
+    api_key=os.getenv("XAI_API_KEY"),
+    timeout=3600, # Override default timeout with longer timeout for reasoning models
+)
 
 
 def get_cloud_var(cloud_object, var_name):
@@ -246,7 +250,7 @@ def scan_for_requests():
 
             # Step 4: construct packet (keep id as string)
             try:
-                pkt = packet(
+                pkt = Packet(
                     sender=fields[0],
                     projectname=fields[1],
                     id=str(fields[2]),
@@ -301,7 +305,7 @@ def delete_old_requests():
 def process_request(req):
     global requests
     global responsestoping
-    resp = response(random.randint(1000000000000000, 9999999999999999), req.id, get_timestamp(), "")
+    resp = Response(random.randint(1000000000000000, 9999999999999999), req.id, get_timestamp(), "")
     if req.type == "startup":
         # Startup request: respond with "received"
         resp.payload = "received"
@@ -314,6 +318,16 @@ def process_request(req):
     elif req.type == "ping":
         # Ping request: respond with "pong"
         resp.payload = "pong"
+    elif req.type == "genai":
+        # GenAI request: use xai_sdk to get a response
+        chat = client.chat.create(
+            model="grok-4-fast",
+            messages=[system("You are a highly intelligent AI assistant named ScratchGPT. Respond concisely, with a good response length being around 3 sentences. Markdown and other formatting is not supported.")],
+        )
+        chat.append(user(req.payload))
+
+        response = chat.sample()
+        resp.payload = response.content
     elif req.type == "success":
         # successfully recieved response, delete response and set parent request to responded
         responsestoping = [r for r in responsestoping if r.requestid != req.parentid]
