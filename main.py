@@ -96,12 +96,15 @@ def encode_string_to_num(input_str):
     Encodes a string to a numeric string using the two-digit code mapping.
     Example: 'abc' -> '101112'
     Assumes all characters are in the mapping; raises ValueError otherwise.
+    An exception is "—", which is mapped to '-' (51).
     """
     # Normalize letters to lowercase so encoding is case-insensitive
     result = ''
     for c in input_str:
         key = c.lower() if c.isalpha() else c
         code = char_to_code.get(key)
+        if code is None and c == '—':  # Special case for em dash
+            code = char_to_code['-']
         if code is None:
             raise ValueError(f"Unknown character '{c}' in input")
         result += f"{code:02d}"
@@ -322,7 +325,7 @@ def process_request(req):
         # GenAI request: use xai_sdk to get a response
         chat = client.chat.create(
             model="grok-4-fast",
-            messages=[system("You are a highly intelligent AI assistant named ScratchGPT. Respond concisely, with a good response length being around 3 sentences. Markdown and other formatting is not supported.")],
+            messages=[system("You are a highly intelligent AI assistant named ScratchGPT, developed by the scratch user JuliCai. Respond relatively concisely, with a response length up to 6 sentences. Markdown and other formatting is not supported. Please be aware that only charachters in the standard qwerty keyboard layout are supported. \"—\", for example, is noot supported.")],
         )
         chat.append(user(req.payload))
 
