@@ -95,7 +95,7 @@ def encode_string_to_num(input_str):
     """
     Encodes a string to a numeric string using the two-digit code mapping.
     Example: 'abc' -> '101112'
-    Assumes all characters are in the mapping; raises ValueError otherwise.
+    Skips any character not in the mapping (no exception).
     An exception is "—", which is mapped to '-' (51).
     """
     # Normalize letters to lowercase so encoding is case-insensitive
@@ -106,7 +106,10 @@ def encode_string_to_num(input_str):
         if code is None and c == '—':  # Special case for em dash
             code = char_to_code['-']
         if code is None:
-            raise ValueError(f"Unknown character '{c}' in input")
+            # Skip unknown characters instead of raising
+            if debug:
+                print(f"[DEBUG] Skipping unknown character during encoding: {repr(c)}")
+            continue
         result += f"{code:02d}"
     return result
 
