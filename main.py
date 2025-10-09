@@ -11,6 +11,8 @@ from xai_sdk.chat import system, user
 """
 CHANGE THESE VARIABLES:
 """
+
+runtime = 595  # Set the runtime duration in seconds that the server should run before shutting down
 project_id = "1204776886"  # Replace with your Scratch project ID
 logfile_path = "logs.txt"  # Path to your log file
 useragent = "library: scratchpacket/1.0 by jhalloran | cloud bot by YOUR NAME"  # User agent for Scratch requests
@@ -389,10 +391,15 @@ def delete_old_responses():
     if basicprints and before_count != after_count:
         print(f"Deleted {before_count - after_count} old responses due to timeout.")
 
-while True:
+starttime = time.time()
+while time.time() - starttime < runtime:
     scan_for_requests()
     delete_old_requests()
     process_all_requests()
     ping_response()
     delete_old_responses()
     time.sleep(0.2)
+
+if basicprints: print("Runtime limit reached, shutting down.")
+cloud.disconnect()
+os._exit(0)
