@@ -23,3 +23,13 @@ class Response:
 
     def __str__(self):
         return f"Response(responseid={self.responseid}, requestid={self.requestid}, timestamp={self.timestamp}, payload={self.payload})"
+
+class Save:
+    def __init__(self, username, data, lastsaved, firstsaved):
+        self.username = username
+        self.data = data
+        self.lastsaved = lastsaved
+        self.firstsaved = firstsaved
+
+    def __str__(self):
+        return f"Save(username={self.username}, data={self.data}, lastsaved={self.lastsaved}, firstsaved={self.firstsaved})"

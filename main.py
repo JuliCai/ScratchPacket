@@ -1,6 +1,6 @@
 import os
 import scratchattach as sa
-from scratchpacket import Packet, Response
+from scratchpacket import Packet, Response, Save
 import time
 import traceback
 import random
@@ -23,14 +23,53 @@ basicprints = True # Whether to print basic status/lifecycle updates (recommende
 """
 DON'T CHANGE THESE VARIABLES:
 """
+saves = []
 requests = []
 responsestoping = []
 cloud = sa.get_tw_cloud(project_id, purpose = useragent)
+savefilepath = "saves.save"
 client = Client(
     api_key=os.getenv("XAI_API_KEY"),
     timeout=3600, # Override default timeout with longer timeout for reasoning models
 )
 
+def save_saves_to_file():
+    with open(savefilepath, "w") as f:
+        for save in saves:
+            savecode = create_savecode([
+                str(save.username).lower(),
+                str(save.data),
+                str(save.lastsaved),
+                str(save.firstsaved)
+            ])
+            f.write(savecode + "\n")
+
+def load_saves_from_file():
+    global saves
+    saves = []
+    if not os.path.exists(savefilepath):
+        return
+    with open(savefilepath, "r") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            fields = parse_savecode(line)
+            if len(fields) != 4:
+                continue
+            try:
+                save = Save(
+                    username=fields[0],
+                    data=fields[1],
+                    lastsaved=int(fields[2]),
+                    firstsaved=int(fields[3])
+                )
+                saves.append(save)
+            except Exception as e:
+                if debug:
+                    print(f"[DEBUG] Error loading save from line: {line}")
+                    print(f"[DEBUG] Exception: {e}")
+                    print(traceback.format_exc())
 
 def get_cloud_var(cloud_object, var_name):
     """
@@ -346,6 +385,48 @@ def process_request(req):
                     print(f"Request ID {r.id} from {r.sender} marked as responded.")
             if r.id == req.id:
                 r.state = "responded"
+    elif req.type == "load":
+        # load request. Search for save by username and respond with data. If no save found, respond with blank payload.
+        found_save = None
+        for save in saves:
+            if save.username == req.payload:
+                found_save = save
+                break
+        if found_save:
+            resp.payload = found_save.data
+        else:
+            resp.payload = ""
+        if debug:
+            if found_save:
+                print(f"[DEBUG] Processed load request ID {req.id} from {req.sender}, found save for username '{req.payload}'")
+            else:
+                print(f"[DEBUG] Processed load request ID {req.id} from {req.sender}, no save found for username '{req.payload}'")
+    elif req.type == "save":
+        # save request. Save data for username in payload. If save exists, update it. If not, create new save.
+        fields = parse_savecode(req.payload)
+        if len(fields) != 2:
+            resp.payload = "error: invalid save format"
+        else:
+            username = fields[0]
+            data = fields[1]
+            existing_save = None
+            for save in saves:
+                if save.username == username:
+                    existing_save = save
+                    break
+            current_time = get_timestamp()
+            if existing_save:
+                existing_save.data = data
+                existing_save.lastsaved = current_time
+                resp.payload = "updated"
+                if debug:
+                    print(f"[DEBUG] Updated existing save for username '{username}' from request ID {req.id} by {req.sender}")
+            else:
+                new_save = Save(username, data, current_time, current_time)
+                saves.append(new_save)
+                resp.payload = "created"
+                if debug:
+                    print(f"[DEBUG] Created new save for username '{username}' from request ID {req.id} by {req.sender}")
     elif req.type == "verify":
         # verify request. Search for verification code in comments of the authenticator project, and respond with the username who sent it. If no comment found, respond with a blank payload.
         authenticator_project_id = 1230277868
@@ -405,6 +486,7 @@ def delete_old_responses():
     if basicprints and before_count != after_count:
         print(f"Deleted {before_count - after_count} old responses due to timeout.")
 
+load_saves_from_file()
 starttime = time.time()
 while time.time() - starttime < runtime:
     scan_for_requests()
@@ -415,5 +497,6 @@ while time.time() - starttime < runtime:
     time.sleep(0.2)
 
 if basicprints: print("Runtime limit reached, shutting down.")
+save_saves_to_file()
 cloud.disconnect()
 os._exit(0)
