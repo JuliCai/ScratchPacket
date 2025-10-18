@@ -7,7 +7,6 @@ import random
 from openai import OpenAI
 import threading
 
-
 """
 CHANGE THESE VARIABLES:
 """
@@ -16,9 +15,9 @@ runtime = 595  # Set the runtime duration in seconds that the server should run 
 project_id = "1230640342"  # Replace with your Scratch project ID
 logfile_path = "logs.txt"  # Path to your log file
 useragent = "library: scratchpacket/1.0 by jhalloran | cloud bot by YOUR NAME"  # User agent for Scratch requests
-debug = True # Whether to print debug stuff (not recommended outside development)
-basicprints = True # Whether to print basic status/lifecycle updates (recommended for running locally, not recommended for servers)
-
+debug = True  # Whether to print debug stuff (not recommended outside development)
+basicprints = True  # Whether to print basic status/lifecycle updates (recommended for running locally, not recommended for servers)
+MAX_WORKERS = 4  # Max number of requests to process concurrently (>=2 recommended to handle verify while genai runs)
 
 """
 DON'T CHANGE THESE VARIABLES:
@@ -26,11 +25,19 @@ DON'T CHANGE THESE VARIABLES:
 saves = []
 requests = []
 responsestoping = []
-cloud = sa.get_tw_cloud(project_id, purpose = useragent)
+cloud = sa.get_tw_cloud(project_id, purpose=useragent)
 savefilepath = "saves.save"
 client = OpenAI(
     api_key=os.getenv("OPENAI_API_KEY")
 )
+
+# Concurrency primitives
+requests_lock = threading.RLock()
+responsestoping_lock = threading.RLock()
+saves_lock = threading.RLock()
+stop_event = threading.Event()
+processing_semaphore = threading.Semaphore(MAX_WORKERS)
+
 system_prompt_content = """
 # BRIEF:
 you are a highly intelligent AI assistant named ScratchGPT, developed by the scratch user JuliCai.
@@ -47,42 +54,44 @@ DO NOT respond with anything that could be age-inappropriate or violate scratch 
 """
 
 def save_saves_to_file():
-    with open(savefilepath, "w") as f:
-        for save in saves:
-            savecode = create_savecode([
-                str(save.username).lower(),
-                str(save.data),
-                str(save.lastsaved),
-                str(save.firstsaved)
-            ])
-            f.write(savecode + "\n")
+    with saves_lock:
+        with open(savefilepath, "w") as f:
+            for save in saves:
+                savecode = create_savecode([
+                    str(save.username).lower(),
+                    str(save.data),
+                    str(save.lastsaved),
+                    str(save.firstsaved)
+                ])
+                f.write(savecode + "\n")
 
 def load_saves_from_file():
     global saves
-    saves = []
-    if not os.path.exists(savefilepath):
-        return
-    with open(savefilepath, "r") as f:
-        for line in f:
-            line = line.strip()
-            if not line:
-                continue
-            fields = parse_savecode(line)
-            if len(fields) != 4:
-                continue
-            try:
-                save = Save(
-                    username=fields[0],
-                    data=fields[1],
-                    lastsaved=int(fields[2]),
-                    firstsaved=int(fields[3])
-                )
-                saves.append(save)
-            except Exception as e:
-                if debug:
-                    print(f"[DEBUG] Error loading save from line: {line}")
-                    print(f"[DEBUG] Exception: {e}")
-                    print(traceback.format_exc())
+    with saves_lock:
+        saves = []
+        if not os.path.exists(savefilepath):
+            return
+        with open(savefilepath, "r") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                fields = parse_savecode(line)
+                if len(fields) != 4:
+                    continue
+                try:
+                    save = Save(
+                        username=fields[0],
+                        data=fields[1],
+                        lastsaved=int(fields[2]),
+                        firstsaved=int(fields[3])
+                    )
+                    saves.append(save)
+                except Exception as e:
+                    if debug:
+                        print(f"[DEBUG] Error loading save from line: {line}")
+                        print(f"[DEBUG] Exception: {e}")
+                        print(traceback.format_exc())
 
 def get_cloud_var(cloud_object, var_name):
     """
@@ -144,7 +153,6 @@ char_to_code = {
 # This will map numeric codes back to their representative characters (lowercase letters)
 code_to_char = {v: k for k, v in char_to_code.items()}
 
-
 def encode_string_to_num(input_str):
     """
     Encodes a string to a numeric string using the two-digit code mapping.
@@ -152,7 +160,6 @@ def encode_string_to_num(input_str):
     Skips any character not in the mapping (no exception).
     An exception is "—", which is mapped to '-' (51).
     """
-    # Normalize letters to lowercase so encoding is case-insensitive
     result = ''
     for c in input_str:
         key = c.lower() if c.isalpha() else c
@@ -160,13 +167,11 @@ def encode_string_to_num(input_str):
         if code is None and c == '—':  # Special case for em dash
             code = char_to_code['-']
         if code is None:
-            # Skip unknown characters instead of raising
             if debug:
                 print(f"[DEBUG] Skipping unknown character during encoding: {repr(c)}")
             continue
         result += f"{code:02d}"
     return result
-
 
 def decode_num_to_string(num_str):
     """
@@ -189,7 +194,6 @@ def decode_num_to_string(num_str):
         result += c
     return result
 
-
 def create_savecode(input_list):
     r"""
     Creates a savecode string from a list of fields.
@@ -198,13 +202,10 @@ def create_savecode(input_list):
     Example: ['examples', 'galore'] -> 'examples|galore|'
     """
     def escape_field(field):
-        # Savecode fields keep their original case; only encoding/decoding of the
-        # numeric mapping is case-insensitive. Escape backslashes and pipes.
         return field.replace('\\', '\\\\').replace('|', '\\|')
 
     escaped_fields = [escape_field(field) for field in input_list]
     return '|'.join(escaped_fields) + '|'
-
 
 def parse_savecode(input_string):
     r"""
@@ -224,9 +225,9 @@ def parse_savecode(input_string):
         if input_string[i] == '\\':
             i += 1
             if i < length:
-                current_field += input_string[i]  # Add the escaped char literally
+                current_field += input_string[i]
             else:
-                current_field += '\\'  # Trailing escape (unlikely, but handle)
+                current_field += '\\'
         elif input_string[i] == '|':
             fields.append(current_field)
             current_field = ''
@@ -234,17 +235,14 @@ def parse_savecode(input_string):
             current_field += input_string[i]
         i += 1
 
-    # If no trailing '|', the last field might not be appended, but assume it ends with '|'
     if current_field:
-        fields.append(current_field)  # In case no final '|'
+        fields.append(current_field)
 
     return fields
 
 # cloud engine:
 def get_timestamp():
-    # Get current time in seconds since epoch
     epoch_time = time.time()
-    # Calculate seconds since Jan 1, 2000
     seconds_since_2000 = int(epoch_time - 946684800)
     return seconds_since_2000
 
@@ -328,37 +326,34 @@ def scan_for_requests():
                 continue
 
             # Step 5: check for duplicates / update existing
-            for req in requests:
-                if req.id == pkt.id and req.sender == pkt.sender:
-                    # Already processing this request, refresh lastping if it is newer
-                    try:
-                        if pkt.lastping > req.lastping:
-                            req.lastping = pkt.lastping
-                    except Exception as e:
-                        if debug:
-                            print(f"[DEBUG] Error updating lastping for request id={pkt.id}, sender={pkt.sender}")
-                            print(f"[DEBUG] Exception: {e}")
-                            print(traceback.format_exc())
-                    break
-            else:
-                try:
-                    if get_timestamp() - pkt.timestamp < 16: # Only accept requests newer than 15 seconds
-                        requests.append(pkt)
-                        if basicprints:
-                            print(f"New request from {pkt.sender}: {pkt.type} (ID: {pkt.id})")
-                except Exception as e:
-                    if debug:
-                        print(f"[DEBUG] Error during timestamp check or appending request for packet id={pkt.id}")
-                        print(f"[DEBUG] Exception: {e}")
-                        print(traceback.format_exc())
-                    continue
+            try:
+                with requests_lock:
+                    for req in requests:
+                        if req.id == pkt.id and req.sender == pkt.sender:
+                            # Already processing this request, refresh lastping if it is newer
+                            if pkt.lastping > req.lastping:
+                                req.lastping = pkt.lastping
+                            break
+                    else:
+                        # Only accept requests newer than 15 seconds
+                        if get_timestamp() - pkt.timestamp < 16:
+                            requests.append(pkt)
+                            if basicprints:
+                                print(f"New request from {pkt.sender}: {pkt.type} (ID: {pkt.id})")
+            except Exception as e:
+                if debug:
+                    print(f"[DEBUG] Error during timestamp check or appending request for packet id={pkt.id}")
+                    print(f"[DEBUG] Exception: {e}")
+                    print(traceback.format_exc())
+                continue
 
 def delete_old_requests():
     global requests
     current_time = get_timestamp()
-    before_count = len(requests)
-    requests = [req for req in requests if current_time - req.lastping < 16]
-    after_count = len(requests)
+    with requests_lock:
+        before_count = len(requests)
+        requests = [req for req in requests if current_time - req.lastping < 16]
+        after_count = len(requests)
     if basicprints and before_count != after_count:
         print(f"Deleted {before_count - after_count} old requests.")
 
@@ -367,45 +362,50 @@ def process_request(req):
     global responsestoping
     resp = Response(random.randint(1000000000000000, 9999999999999999), req.id, get_timestamp(), "")
     if req.type == "startup":
-        # Startup request: respond with "received"
         resp.payload = "received"
     elif req.type == "helloworld":
-        # Hello world request: respond with "Hello, world!"
         resp.payload = "Hello, world!"
     elif req.type == "whois":
-        # Whois request: respond with useragent info
         resp.payload = useragent
     elif req.type == "ping":
-        # Ping request: respond with "pong"
         resp.payload = "pong"
     elif req.type == "genai":
         # GenAI request: use openai api to generate response based on prompt in payload
         response = client.responses.create(
-            model = "gpt-5",
+            model="gpt-5",
             reasoning={"effort": "low"},
-            input = [
+            input=[
                 {"role": "system", "content": system_prompt_content},
                 {"role": "user", "content": req.payload}
             ]
         )
         resp.payload = response.output_text
     elif req.type == "success":
-        # successfully recieved response, delete response and set parent request to responded
-        responsestoping = [r for r in responsestoping if r.requestid != req.parentid]
-        for r in requests:
-            if r.id == req.parentid:
-                r.state = "responded"
-                if basicprints:
-                    print(f"Request ID {r.id} from {r.sender} marked as responded.")
-            if r.id == req.id:
-                r.state = "responded"
+        # successfully received response, delete response and set parent request to responded
+        try:
+            with responsestoping_lock:
+                responsestoping = [r for r in responsestoping if r.requestid != req.parentid]
+            with requests_lock:
+                for r in requests:
+                    if r.id == req.parentid:
+                        r.state = "responded"
+                        if basicprints:
+                            print(f"Request ID {r.id} from {r.sender} marked as responded.")
+                    if r.id == req.id:
+                        r.state = "responded"
+        except Exception as e:
+            if debug:
+                print(f"[DEBUG] Error marking request success for parentid={req.parentid}, id={req.id}")
+                print(f"[DEBUG] Exception: {e}")
+                print(traceback.format_exc())
     elif req.type == "load":
         # load request. Search for save by username and respond with data. If no save found, respond with blank payload.
         found_save = None
-        for save in saves:
-            if save.username == req.payload:
-                found_save = save
-                break
+        with saves_lock:
+            for save in saves:
+                if save.username == req.payload:
+                    found_save = save
+                    break
         if found_save:
             resp.payload = found_save.data
         else:
@@ -423,34 +423,38 @@ def process_request(req):
         else:
             username = fields[0]
             data = fields[1]
-            existing_save = None
-            for save in saves:
-                if save.username == username:
-                    existing_save = save
-                    break
-            current_time = get_timestamp()
-            if existing_save:
-                existing_save.data = data
-                existing_save.lastsaved = current_time
-                resp.payload = "updated"
-                if debug:
-                    print(f"[DEBUG] Updated existing save for username '{username}' from request ID {req.id} by {req.sender}")
-            else:
-                new_save = Save(username, data, current_time, current_time)
-                saves.append(new_save)
-                resp.payload = "created"
-                if debug:
-                    print(f"[DEBUG] Created new save for username '{username}' from request ID {req.id} by {req.sender}")
+            with saves_lock:
+                existing_save = None
+                for save in saves:
+                    if save.username == username:
+                        existing_save = save
+                        break
+                current_time = get_timestamp()
+                if existing_save:
+                    existing_save.data = data
+                    existing_save.lastsaved = current_time
+                    resp.payload = "updated"
+                    if debug:
+                        print(f"[DEBUG] Updated existing save for username '{username}' from request ID {req.id} by {req.sender}")
+                else:
+                    new_save = Save(username, data, current_time, current_time)
+                    saves.append(new_save)
+                    resp.payload = "created"
+                    if debug:
+                        print(f"[DEBUG] Created new save for username '{username}' from request ID {req.id} by {req.sender}")
     elif req.type == "verify":
         # verify request. Search for verification code in comments of the authenticator project, and respond with the username who sent it. If no comment found, respond with a blank payload.
         authenticator_project_id = 1230277868
         auth_project = sa.get_project(str(authenticator_project_id))
         auth_comments = auth_project.comments(limit=100, offset=0)
-        print(req.payload)
+        if debug:
+            print(req.payload)
         for comment in auth_comments:
-            print(comment.content.strip())
+            if debug:
+                print(comment.content.strip())
             if comment.content.strip() == req.payload.strip():
-                if debug: print(f"[DEBUG] Found matching verification code in comment by user: {comment.author_name}, code: '{comment.content.strip()}'")
+                if debug:
+                    print(f"[DEBUG] Found matching verification code in comment by user: {comment.author_name}, code: '{comment.content.strip()}'")
                 resp.payload = comment.author_name
                 break
         if debug:
@@ -458,59 +462,99 @@ def process_request(req):
     else:
         # Unknown request type: respond with error
         resp.payload = "error: unknown request type"
+    # Add response to outgoing list (except for "success" control packets)
     if not req.type == "success":
-        responsestoping.append(resp)
-    
+        with responsestoping_lock:
+            responsestoping.append(resp)
+
+def _process_one_request_worker(req):
+    """
+    Worker that processes a single request, then marks it as ready to ping.
+    Uses a semaphore to limit concurrency.
+    """
+    try:
+        process_request(req)
+        with requests_lock:
+            # Move to next lifecycle state; ping_response will handle broadcasting
+            req.state = "pingingresponse"
+        if basicprints:
+            print(f"Processed request ID {req.id} from {req.sender}")
+    except Exception as e:
+        if debug:
+            print(f"[DEBUG] Error processing request ID {req.id} from {req.sender}")
+            print(f"[DEBUG] Exception: {e}")
+            print(traceback.format_exc())
+    finally:
+        processing_semaphore.release()
+
 def process_all_requests():
-    global requests, responsestoping
-    for req in requests:
-        if req.state == "new":
-            try:
-                process_request(req)
-                req.state = "pingingresponse"
-                if basicprints:
-                    print(f"Processed request ID {req.id} from {req.sender}")
-            except Exception as e:
-                if debug:
-                    print(f"[DEBUG] Error processing request ID {req.id} from {req.sender}")
-                    print(f"[DEBUG] Exception: {e}")
-                    print(traceback.format_exc())
-                continue
-        
+    """
+    Background dispatcher that continuously picks up NEW requests and processes
+    them in parallel, up to MAX_WORKERS at a time.
+    """
+    while not stop_event.is_set():
+        to_process = []
+        with requests_lock:
+            for req in requests:
+                if req.state == "new":
+                    req.state = "processing"
+                    to_process.append(req)
+        # Spawn worker threads for the newly claimed requests
+        for req in to_process:
+            processing_semaphore.acquire()
+            t = threading.Thread(target=_process_one_request_worker, args=(req,), daemon=True)
+            t.start()
+        time.sleep(0.02)  # Small delay to avoid busy-spinning
+
 def ping_response():
     global responsestoping, cloud
-    # pick random response to ping
-    if responsestoping: 
-        resp = random.choice(responsestoping)
-        response_savecode = create_savecode([
-            str(resp.responseid),
-            str(resp.requestid),
-            str(resp.timestamp),
-            str(resp.payload)
-        ])
-        encoded_response = encode_string_to_num(response_savecode)
+    # Pick a random response to ping (if any)
+    encoded_response = None
+    with responsestoping_lock:
+        if responsestoping:
+            resp = random.choice(responsestoping)
+            response_savecode = create_savecode([
+                str(resp.responseid),
+                str(resp.requestid),
+                str(resp.timestamp),
+                str(resp.payload)
+            ])
+            encoded_response = encode_string_to_num(response_savecode)
+    if encoded_response is not None:
         cloud.set_var("CLOUD_SERVER_DATA", encoded_response)
+
 def delete_old_responses():
     # delete responses older than 20 seconds
     global responsestoping
     current_time = get_timestamp()
-    before_count = len(responsestoping)
-    responsestoping = [r for r in responsestoping if current_time - r.timestamp < 20]
-    after_count = len(responsestoping)
+    with responsestoping_lock:
+        before_count = len(responsestoping)
+        responsestoping = [r for r in responsestoping if current_time - r.timestamp < 20]
+        after_count = len(responsestoping)
     if basicprints and before_count != after_count:
         print(f"Deleted {before_count - after_count} old responses due to timeout.")
 
+# Startup: load saves, launch background processing thread, then run cloud loop
 load_saves_from_file()
+processor_thread = threading.Thread(target=process_all_requests, name="RequestProcessor", daemon=True)
+processor_thread.start()
+
 starttime = time.time()
 while time.time() - starttime < runtime:
     scan_for_requests()
     delete_old_requests()
-    process_all_requests()
+    # process_all_requests()  # moved to background thread
     ping_response()
     delete_old_responses()
     time.sleep(0.2)
 
-if basicprints: print("Runtime limit reached, shutting down.")
+# Shutdown
+if basicprints:
+    print("Runtime limit reached, shutting down.")
+stop_event.set()
+# Give the processor thread a brief moment to exit its loop
+processor_thread.join(timeout=2.0)
+
 save_saves_to_file()
 cloud.disconnect()
-os._exit(0)
+os._exit(0)  # required because scratchattach's event threads don't shut off even if you tell them to
