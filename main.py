@@ -13,7 +13,7 @@ CHANGE THESE VARIABLES:
 """
 
 runtime = 595  # Set the runtime duration in seconds that the server should run before shutting down
-project_id = "1204776886"  # Replace with your Scratch project ID
+project_id = "1230640342"  # Replace with your Scratch project ID
 logfile_path = "logs.txt"  # Path to your log file
 useragent = "library: scratchpacket/1.0 by jhalloran | cloud bot by YOUR NAME"  # User agent for Scratch requests
 debug = True # Whether to print debug stuff (not recommended outside development)
@@ -330,7 +330,7 @@ def process_request(req):
         # GenAI request: use xai_sdk to get a response
         chat = client.chat.create(
             model="grok-4-fast",
-            messages=[system("You are a highly intelligent AI assistant named ScratchGPT, developed by the scratch user JuliCai. Respond relatively concisely, with a response length up to 6 sentences. Markdown and other formatting is not supported. Please be aware that only charachters in the standard qwerty keyboard layout are supported. \"—\", for example, is noot supported.")],
+            messages=[system("You are a highly intelligent AI assistant named ScratchGPT, developed by the scratch user JuliCai. Respond relatively concisely, with a response length up to 6 sentences. Markdown and other formatting is not supported. Please be aware that only charachters in the standard qwerty keyboard layout are supported. \"—\", for example, is noot supported. DO NOT respond with anything that could be age-inappropriate or violate scratch community guidelines.")],
         )
         chat.append(user(req.payload))
 
@@ -346,6 +346,20 @@ def process_request(req):
                     print(f"Request ID {r.id} from {r.sender} marked as responded.")
             if r.id == req.id:
                 r.state = "responded"
+    elif req.type == "verify":
+        # verify request. Search for verification code in comments of the authenticator project, and respond with the username who sent it. If no comment found, respond with a blank payload.
+        authenticator_project_id = 1230277868
+        auth_project = sa.get_project(str(authenticator_project_id))
+        auth_comments = auth_project.comments(limit=100, offset=0)
+        print(req.payload)
+        for comment in auth_comments:
+            print(comment.content.strip())
+            if comment.content.strip() == req.payload.strip():
+                if debug: print(f"[DEBUG] Found matching verification code in comment by user: {comment.author_name}, code: '{comment.content.strip()}'")
+                resp.payload = comment.author_name
+                break
+        if debug:
+            print(f"[DEBUG] Processed verify request ID {req.id} from {req.sender}, responded with username: '{resp.payload}'")
     else:
         # Unknown request type: respond with error
         resp.payload = "error: unknown request type"

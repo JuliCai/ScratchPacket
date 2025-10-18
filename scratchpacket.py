@@ -10,6 +10,9 @@ class Packet:
         self.type = type
         self.responded = False
         self.state = "new"  # new, pingingresponse, responded
+    
+    def __str__(self):
+        return f"Packet(sender={self.sender}, projectname={self.projectname}, id={self.id}, timestamp={self.timestamp}, lastping={self.lastping}, parentid={self.parentid}, payload={self.payload}, type={self.type}, responded={self.responded}, state={self.state})"
 
 class Response:
     def __init__(self, responseid, requestid, timestamp, payload):
@@ -17,3 +20,6 @@ class Response:
         self.requestid = requestid
         self.timestamp = timestamp
         self.payload = payload
+
+    def __str__(self):
+        return f"Response(responseid={self.responseid}, requestid={self.requestid}, timestamp={self.timestamp}, payload={self.payload})"
