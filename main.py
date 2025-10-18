@@ -4,8 +4,8 @@ from scratchpacket import Packet, Response, Save
 import time
 import traceback
 import random
-from xai_sdk import Client
-from xai_sdk.chat import system, user
+from openai import OpenAI
+import threading
 
 
 """
@@ -28,10 +28,23 @@ requests = []
 responsestoping = []
 cloud = sa.get_tw_cloud(project_id, purpose = useragent)
 savefilepath = "saves.save"
-client = Client(
-    api_key=os.getenv("XAI_API_KEY"),
-    timeout=3600, # Override default timeout with longer timeout for reasoning models
+client = OpenAI(
+    api_key=os.getenv("OPENAI_API_KEY")
 )
+system_prompt_content = """
+# BRIEF:
+you are a highly intelligent AI assistant named ScratchGPT, developed by the scratch user JuliCai.
+
+# RESPONSE STYLE:
+- Respond relatively concisely, with a response length up to 6 sentences.
+- Markdown and other formatting (LaTeX, etc.) is NOT supported.
+- Please be aware that only charachters in the standard qwerty keyboard layout are supported. "—", for example, is not supported. All non-supported charachters will not be included in the user-facing response.
+- newline characters are not supported.
+
+
+# STRICT CONTENT GUIDELINES:
+DO NOT respond with anything that could be age-inappropriate or violate scratch community guidelines.
+"""
 
 def save_saves_to_file():
     with open(savefilepath, "w") as f:
@@ -366,15 +379,16 @@ def process_request(req):
         # Ping request: respond with "pong"
         resp.payload = "pong"
     elif req.type == "genai":
-        # GenAI request: use xai_sdk to get a response
-        chat = client.chat.create(
-            model="grok-4-fast",
-            messages=[system("You are a highly intelligent AI assistant named ScratchGPT, developed by the scratch user JuliCai. Respond relatively concisely, with a response length up to 6 sentences. Markdown and other formatting is not supported. Please be aware that only charachters in the standard qwerty keyboard layout are supported. \"—\", for example, is noot supported. DO NOT respond with anything that could be age-inappropriate or violate scratch community guidelines.")],
+        # GenAI request: use openai api to generate response based on prompt in payload
+        response = client.responses.create(
+            model = "gpt-5",
+            reasoning={"effort": "low"},
+            input = [
+                {"role": "system", "content": system_prompt_content},
+                {"role": "user", "content": req.payload}
+            ]
         )
-        chat.append(user(req.payload))
-
-        response = chat.sample()
-        resp.payload = response.content
+        resp.payload = response.output_text
     elif req.type == "success":
         # successfully recieved response, delete response and set parent request to responded
         responsestoping = [r for r in responsestoping if r.requestid != req.parentid]
