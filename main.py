@@ -12,22 +12,27 @@ import re
 import string
 from PIL import Image
 from datetime import datetime
+from pathlib import Path  # NEW
 
 """
 CHANGE THESE VARIABLES:
 """
 
 runtime = 595  # Set the runtime duration in seconds that the server should run before shutting down
-project_id = "1230640342"  # Replace with your Scratch project ID
-logfile_path = "logs.log"  # Path to your log file
+project_id = "1204776886"  # Replace with your Scratch project ID
 useragent = "library: scratchpacket/1.0 by jhalloran | cloud bot by YOUR NAME"  # User agent for Scratch requests
 debug = True  # Whether to print debug stuff (not recommended outside development)
 basicprints = True  # Whether to print basic status/lifecycle updates (recommended for running locally, not recommended for servers)
 deepdebug = False  # Whether to print very verbose debug info (not recommended outside development)
 MAX_WORKERS = 4  # Max number of requests to process concurrently (>=2 recommended to handle verify while genai runs)
 
-# Directory to store generated images (created if missing)
-images_dir = "generated_images"
+# Base directory for all files: absolute, derived from this script's location (cron-safe)
+BASE_DIR = Path(__file__).resolve().parent
+
+# Absolute paths (cron-safe)
+logfile_path = str((BASE_DIR / "logs.log").resolve())
+images_dir = str((BASE_DIR / "generated_images").resolve())
+savefilepath = str((BASE_DIR / "saves.save").resolve())
 
 # Deep-debug controls
 TRUNCATE_AT = 2000  # Max characters to print for raw payloads (set higher/lower as needed)
@@ -40,7 +45,6 @@ saves = []
 requests = []
 responsestoping = []
 cloud = sa.get_tw_cloud(project_id, purpose=useragent)
-savefilepath = "saves.save"
 client = OpenAI(
     api_key=os.getenv("OPENAI_API_KEY")
 )
@@ -68,8 +72,16 @@ last_seen_client_vars = {
     "CLOUD_CLIENT_DATA_4": None,
 }
 
-# Ensure images directory exists
+# Ensure directories exist (cron-safe)
 os.makedirs(images_dir, exist_ok=True)
+# Parent of logfile may not exist in some setups; ensure it
+log_parent = os.path.dirname(logfile_path)
+if log_parent:
+    os.makedirs(log_parent, exist_ok=True)
+# Parent of save file too
+save_parent = os.path.dirname(savefilepath)
+if save_parent:
+    os.makedirs(save_parent, exist_ok=True)
 
 # -----------------
 # Logging helpers
@@ -92,7 +104,11 @@ def _open_log():
     global _log_file_handle
     if _log_file_handle is None:
         _log_file_handle = open(logfile_path, "a", encoding="utf-8", buffering=1)
-        header = f"{_now()} [INIT] logfile opened; deepdebug={deepdebug}, debug={debug}, basicprints={basicprints}, MAX_WORKERS={MAX_WORKERS}\n"
+        header = (
+            f"{_now()} [INIT] logfile opened; deepdebug={deepdebug}, debug={debug}, basicprints={basicprints}, "
+            f"MAX_WORKERS={MAX_WORKERS}, cwd={os.getcwd()}, base_dir={str(BASE_DIR)}, "
+            f"images_dir={images_dir}, savefile={savefilepath}\n"
+        )
         _log_file_handle.write(header)
 
 def _should_emit(level):
@@ -763,13 +779,13 @@ def process_request(req):
                     existing_save.lastsaved = current_time
                     resp.payload = "updated"
                     if debug:
-                        log_debug(f"Updated existing save for username '{username}' from request ID {req.id} by {req.sender}")
+                        log_debug(f"Updated existing save for username '{username}' from request ID {req.id} by {req.sender}. new save data: '{data}'")
                 else:
                     new_save = Save(username, data, current_time, current_time)
                     saves.append(new_save)
                     resp.payload = "created"
                     if debug:
-                        log_debug(f"Created new save for username '{username}' from request ID {req.id} by {req.sender}")
+                        log_debug(f"Created new save for username '{username}' from request ID {req.id} by {req.sender}. save data: '{data}'")
         if deepdebug:
             log_deep(f"save_request username={_truncate(fields[0] if len(fields) > 0 else '')} data_sample={_truncate(fields[1] if len(fields) > 1 else '')}")
 
@@ -900,11 +916,21 @@ def delete_old_responses():
         ids = [(r.requestid, r.responseid) for r in removed]
         log_deep(f"delete_old_responses removed={ids}")
 
-# Startup: load saves, launch background processing thread, then run cloud loop
+# Startup
 load_saves_from_file()
 processor_thread = threading.Thread(target=process_all_requests, name="RequestProcessor", daemon=True)
 processor_thread.start()
 log_basic("Background RequestProcessor started.")
+
+# Log resolved paths and a quick write check for images_dir
+try:
+    testfile = os.path.join(images_dir, ".write_test")
+    with open(testfile, "w", encoding="utf-8") as tf:
+        tf.write(_now() + " write test\n")
+    os.remove(testfile)
+    log_basic(f"Path check OK: cwd={os.getcwd()} base_dir={str(BASE_DIR)} images_dir={images_dir} log={logfile_path} saves={savefilepath}")
+except Exception as e:
+    log_basic(f"WARNING: images_dir not writable: {images_dir}; error={e}")
 
 starttime = time.time()
 if deepdebug:
